@@ -15,8 +15,14 @@
 #define GREEN_LED_PIN 30
 #define BUZZER_PIN 6
 
-float MAX_PWM = 25;
-float MAX_TURN_PWM = 50;
+float MAX_PWM = 20;
+float MAX_TURN_PWM = 40;
+
+float MAX_SPEED = 20;
+float MAX_TURN_SPEED = 40;
+
+int needed_Count_L = 0;
+int needed_Count_R = 0;
 
 
 boolean led_state;  // Variable to "remember" the state
@@ -35,22 +41,50 @@ Kinematics_c kinematics;
 PID_c right_PID;
 PID_c left_PID;
 PID_c turning_PID;
+
+float currentTurnValue = 0;
+
+//turning variables
+float wantedAngle = 0;
+float startingAngle = 0;
+
+//Begin Variables
+bool foundLine = false;
+bool skippedLine = false;
+
+//state variables
+float stateTimer = 0;
+
 // state enum
 enum State_enum {
+  BEGIN = 0,
   FOLLOWING = 1,
-  BACK_TO_START = 2
+  RETURN_HOME = 2,
+  TURN = 3,
+  LOST_LINE = 4,
+  TURN_RIGHT = 5,
+  TURN_LEFT = 6,
+  TURN_ON_LINE = 7,
+  TURN_AROUND = 8,
+  DO_NOTHING = 9,
+  PREP_TURN_LEFT = 10,
+  ROTATE_HOME = 11
 };
 
-State_enum state;
+State_enum state = BEGIN;
 
 
 //rotatiom speeds - refactor into kinematics.h
 long timeSinceLastUpdate = 0;
-long encoderCount_e0 = 0;
-long encoderCount_e1 = 0;
+//long encoderCount_e0 = 0;
+//long encoderCount_e1 = 0;
 
 //timer count
 long timer = 0;
+
+long finishedTimer = 40;
+bool finish = false;
+float x_length_home = 0;
 
 
 
@@ -61,7 +95,8 @@ void setup() {
   delay(1000);
   Serial.println("***RESET***");
   Serial.println(sin(0));
-  state = 1;
+  state = BEGIN;
+  //wantedAngle = 180;
   // Set LED pin as an output
   pinMode(ORANGE_LED_PIN, OUTPUT);
   pinMode(RED_LED_PIN, OUTPUT);
@@ -76,9 +111,9 @@ void setup() {
   motors.initialise();
   lineSensors.initialize();
   kinematics.initialize();
-  right_PID.initialize(0.2f);
-  left_PID.initialize(0.2f);
-  turning_PID.initialize(0.2f);
+  right_PID.initialize(0.6f);
+  left_PID.initialize(0.6f);
+  turning_PID.initialize(0.25f);
 
 
   //set orange LED to LOW
@@ -94,9 +129,11 @@ void setup() {
   // Set initial state of the LED
   led_state = false;
 
-  encoderCount_e0 = count_e0;
-  encoderCount_e1 = count_e1;
+  //encoderCount_e0 = count_e0;
+  //encoderCount_e1 = count_e1;
   timeSinceLastUpdate = micros();
+  stateTimer = micros();
+  //motors.SetMotorPower(20, 0);
 }
 
 
@@ -125,88 +162,229 @@ void MotorControls() {
   }
 }
 
-void VelocityEstimation() {
-  long newEncoderCount_e0 = count_e0;
-  long newEncoderCount_e1 = count_e1;
 
-  long time = micros() / 1000000;
-
-  long diff_e0 = newEncoderCount_e0 - encoderCount_e0;
-  long diff_e1 = newEncoderCount_e1 - encoderCount_e1;
-
-  Serial.print("micros is: ");
-  Serial.println(time);
-
-  long velocity_e0 = diff_e0 / (time - (timer / 1000000));
-  long velocity_e1 = diff_e1 / (time - (timer / 1000000));
-
-  Serial.print("Velocity_e0 = ");
-  Serial.println(diff_e0);
-
-  Serial.print("Velocity_e1 = ");
-  Serial.println(diff_e1);
-
-
-  kinematics.work_out_rots(diff_e1, diff_e0);
-
-
-  Serial.print("[X,Y,THETA] ");
-  Serial.print(kinematics.x_pos);
-  Serial.print(",");
-  Serial.print(kinematics.y_pos);
-  Serial.print(",");
-  Serial.println(kinematics.theta);  // * (180.0f/3.14f));// * (180/3.14f));
-
-  Serial.print("[Right, Left] ");
-  Serial.print(count_e0);
-  Serial.print(",");
-  Serial.println(count_e1);
-  //Serial.print(",");
-  //Serial.println(kinematics.theta);
-  timeSinceLastUpdate = micros();
-  encoderCount_e0 = count_e0;
-  encoderCount_e1 = count_e1;
-}
 
 
 
 // put your main code here, to run repeatedly:
 void loop() {
 
-  //kinematics.update();
 
-  //SetPower(lineSensors.FollowLineSensorReadings());
-  if (kinematics.theta  < 90.0f) {
-    motors.SetMotorPower(30, -30);
-
-    //VelocityEstimation();
-  } else {
-    //Serial.println("I SHOULD STOP");
-    motors.SetMotorPower(0, 0);
+  if(millis()/1000 > finishedTimer && finish == false){
+    finish = true;
+    digitalWrite(ORANGE_LED_PIN, HIGH);
+    
   }
+  //if(kinematics.x_pos > 4000){
+  //  digitalWrite(ORANGE_LED_PIN, HIGH);
+  //  digitalWrite(GREEN_LED_PIN, LOW);
+  //}
+  //Serial.print("Right Sensor - ");
+  //Serial.print(lineSensors.ReadRightMostSensor());
   //
-  //Serial.print("PID reading: ");
-  //Serial.println(PID.update(0, lineSensors.FollowLineSensorReadings()));
-  if (timer + 7000 < micros()) {
-    VelocityEstimation();
+  Serial.print(" - XPOS - ");
+  Serial.print(kinematics.TurnsToMM(kinematics.x_pos));
+  //
+  Serial.print(" - Left Sensor - ");
+  Serial.println(state);
+  //PID WORKING OUT
+
+  if (stateTimer + 2500 < micros()) {
+    Brain();
+    //SetPower(lineSensors.FollowLineSensorReadings());
+    stateTimer = micros();
+  }
+
+  if (timer + 10000 < micros()) {
+    kinematics.VelocityEstimation();
+
     timer = micros();
-    //Serial.print("Total Turned: ");
-    //Serial.println(kinematics.TurnsToMM(count_e0));
+
   }
 }
 void SetPower(float normalVal) {
-  normalVal = turning_PID.update(0, normalVal);
+  normalVal = turning_PID.update(normalVal,currentTurnValue);
+  currentTurnValue = normalVal;
   float leftPWM = MAX_PWM - (normalVal * MAX_TURN_PWM);
   float rightPWM = MAX_PWM + (normalVal * MAX_TURN_PWM);
+  //float leftPWM = MAX_SPEED - (normalVal * MAX_TURN_SPEED);
+  //float rightPWM = MAX_SPEED + (normalVal * MAX_TURN_SPEED);
   //Serial.print("Left Power: ");
   //Serial.print(leftPWM);
   //Serial.print(" - Right Power: ");
   //Serial.println(rightPWM);
-  //motors.SetMotorPower(leftPWM, rightPWM);
+  float lVal = left_PID.update(leftPWM, motors.current_l_speed);
+  float rVal = right_PID.update(rightPWM, motors.current_r_speed);
+
+  //float lVal = left_PID.update(leftPWM, -kinematics.e1Vel) * 0.1f;
+  //float rVal = right_PID.update(rightPWM, -kinematics.e0Vel) * 0.1f;
+
+  //Serial.print(("Left PWM is: "));
+  //Serial.print(lVal);
+  //Serial.print((" - Right PWM is: "));
+  //Serial.print(-kinematics.e1Vel);
+  //Serial.print((" - Normal Value is: "));
+  //Serial.print(leftPWM);
+  //Serial.print((" - Intergral Value is: "));
+  //Serial.print(left_PID.integral);
+  //Serial.print((" - PTerm Value is: "));
+  //Serial.print(left_PID.p_term);
+  //Serial.print((" - Derivitive Value is: "));
+  //Serial.println(left_PID.derivitive);
+  //motors.current_l_speed += lVal;
+  motors.SetMotorPower(motors.current_l_speed + lVal, motors.current_r_speed + rVal);
   //motors.SetMotorPower(leftPWM,rightPWM);
 }
 
 
+void Brain() {
+
+  if (state == BEGIN) {
+    BeginState();
+    return;
+  }
+  if (state == FOLLOWING) {
+    LineFollowState();
+    return;
+  }
+  if (state == TURN_LEFT) {
+    TurnLeftState();
+    return;
+  }
+  if (state == PREP_TURN_LEFT){
+    PrepTurnLeft();
+    return;
+  }
+  if (state == TURN_AROUND){
+    TurnAround();
+    return;
+  }
+  if(state == DO_NOTHING){
+    //digitalWrite(ORANGE_LED_PIN, HIGH);
+    PrepTurn();
+    return;
+  }
+  if(state == RETURN_HOME){
+    GoHome();
+    return;
+  }
+  if(state == ROTATE_HOME){
+    RotateHome();
+    return;
+  }
+}
+
+void BeginState() {
+  if (state == BEGIN) {
+    if (!skippedLine && !foundLine) {
+      SetPower(0);
+    }
+    if (!skippedLine && lineSensors.IsOnLine()) {
+      Serial.println("workin");
+      SetPower(0);
+      foundLine = true;
+    }
+    if (!skippedLine && foundLine && !lineSensors.IsOnLine()) {
+      skippedLine = true;
+      foundLine = false;
+    }
+    if (skippedLine && lineSensors.IsOnLine()) {
+      foundLine = true;
+      motors.Stop();
+      state = FOLLOWING;
+    }
+  }
+}
+
+void LineFollowState() {
+  digitalWrite(GREEN_LED_PIN, HIGH);
+
+  SetPower(lineSensors.FollowLineSensorReadings());
+  if (lineSensors.ReadLeftMostSensor() > 1200) {
+    digitalWrite(GREEN_LED_PIN, LOW);
+    motors.Stop();
+    //state = TURN_LEFT;
+    state = PREP_TURN_LEFT;
+    Serial.println("TURNING LEFT?");
+    
+    return;
+  }
+
+  if (lineSensors.IsOnLine() == false) {
+    if(millis()/1000 > 40){
+      digitalWrite(RED_LED_PIN,HIGH);
+      motors.Stop();
+      state = ROTATE_HOME;
+      kinematics.theta = 0;
+      wantedAngle = atan2(kinematics.y_pos, kinematics.x_pos);
+    }
+    state = TURN_AROUND;
+    needed_Count_L = count_e0 - 20;
+    needed_Count_R = count_e1 - 20;
+    wantedAngle = kinematics.theta + 25;
+
+    digitalWrite(GREEN_LED_PIN, LOW);
+    return;
+  }
+}
+
+void TurnLeftState() {
+  Serial.println("Turn Left State");
+  motors.SetMotorPower(-30, 30);
+  if (kinematics.theta < wantedAngle) {
+    Serial.println("Finished Turning");
+    if (lineSensors.IsOnLine()) {
+    state = FOLLOWING;
+    return;
+    } 
+  }
+}
+
+void PrepTurnLeft(){
+  //SetPower(0);
+  //if(lineSensors.ReadLeftMostSensor() < 1000){
+    motors.Stop();
+    wantedAngle = kinematics.theta - 30;
+    state = TURN_LEFT;
+    return;
+  //}
+}
+
+void TurnAround(){
+  motors.SetMotorPower(30, -30);
+  if(kinematics.theta > wantedAngle){
+    if(lineSensors.IsOnLine()) state = FOLLOWING;
+  }
+}
+
+void PrepTurn(){
+  digitalWrite(RED_LED_PIN, HIGH);
+  motors.SetMotorPower(18, 18);
+  if(needed_Count_L > count_e1 && needed_Count_R > count_e0){
+    motors.Stop();
+    state = TURN_AROUND;
+  }
+}
+
+void RotateHome(){
+  motors.SetMotorPower(30,-30);
+  if(kinematics.theta > wantedAngle){
+    motors.Stop();
+    x_length_home = sqrt(sq(kinematics.x_pos) + sq(kinematics.y_pos));
+    kinematics.theta = 0;
+    state = RETURN_HOME;
+  }
+}
+
+void GoHome(){
+  motors.SetMotorPower(20, 20);
+  if(kinematics.x_pos > x_length_home){
+    motors.Stop();
+  }
+}
+
+//int needed_Count_L = 0;
+//int needed_Count_R = 0;
 
 
 void GetMotorValues(int& left, int& right) {

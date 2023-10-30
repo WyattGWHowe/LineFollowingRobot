@@ -181,11 +181,24 @@ class LineSensor_c {
 
       float maxValue = rightSensorValue + leftSensorValue; 
 
+
+      //convert this to middle and right sensor, then use left sensor as a check, if left is > 1000 we should be turning left
       float rightNormal = (rightSensorValue/maxValue) * 2;
       float leftNormal = (leftSensorValue/maxValue) * 2;
 
       return (leftNormal - rightNormal);
       
+    }
+
+    bool IsOnLine(){
+      unsigned long rightSensorValue = ReadRightSensor();
+      unsigned long middleSensorValue = ReadMiddleSensor();
+      unsigned long leftSensorValue = ReadLeftSensor();
+
+      if(rightSensorValue > 800) return true;
+      if(middleSensorValue > 800) return true;
+      if(leftSensorValue > 800) return true;
+      return false;
     }
 };
 

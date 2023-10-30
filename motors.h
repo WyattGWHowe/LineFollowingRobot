@@ -16,6 +16,8 @@
 class Motors_c {
   public:
 
+  float current_l_speed = 0;
+  float current_r_speed = 0;
     // Constructor, must exist.
     Motors_c() {
 
@@ -48,11 +50,14 @@ void Stop(){
   analogWrite(LEFT_MOTOR_PWM, 0);
 }
 
-int SetMotorPower(int lftpwm, int rhtpwm){
+int SetMotorPower(float lftpwm, float rhtpwm){
   int lftDir = lftpwm > 0 ? 0 : 1;
   int rightDir = rhtpwm > 0 ? 0 : 1;
 
   SetMotorDirection(lftDir, rightDir);
+
+  current_l_speed = lftpwm;
+  current_r_speed = rhtpwm;
 
   lftpwm = lftpwm < 0 ? lftpwm * -1 : lftpwm;
   rhtpwm = rhtpwm < 0 ? rhtpwm * -1 : rhtpwm;
@@ -61,6 +66,8 @@ int SetMotorPower(int lftpwm, int rhtpwm){
 
   analogWrite(RIGHT_MOTOR_PWM, rhtpwm );
   analogWrite(LEFT_MOTOR_PWM, lftpwm );
+
+
 
   return lftpwm;
 }
