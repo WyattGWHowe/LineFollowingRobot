@@ -45,6 +45,7 @@ public:
     derivitiveGain = 0.001f;
   }
 
+//This currently only returns the P-value, as ID was not needed, and was not optimized.
   float update(float demand, float measurement) {
     float e = demand - measurement;     //Set the error
     float dt = (millis()) - previousRun;  //set the delta time
